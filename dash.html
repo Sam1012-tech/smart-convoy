@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>CR(S)² Advanced Convoy Dashboard</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"></script>
+
+<style>
+  :root{
+    --bg:#0b0f14; --card:#0f1720; --muted:#9aa7b2; --accent:#22c1c3; --accent2:#ffc857;
+  }
+  html,body{height:100%;margin:0;background:var(--bg);font-family:Inter,ui-sans-serif,system-ui,Arial;}
+  .app{display:flex;flex-direction:column;height:100%;}
+  header{height:72px;background:#071018;display:flex;align-items:center;justify-content:space-between;padding:12px 20px;border-bottom:1px solid rgba(255,255,255,0.03);}
+  .brand{display:flex;align-items:center;gap:12px}
+  .brand h1{font-size:18px;margin:0;color:#dff7f6}
+  .mission-summary{display:flex;gap:14px;align-items:center}
+  .ms-item{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));padding:8px 12px;border-radius:10px;border:1px solid rgba(255,255,255,0.03);min-width:120px}
+  .ms-item b{display:block;font-size:18px;color:#fff}
+  .ms-item span{font-size:12px;color:var(--muted)}
+
+  .container{display:flex;flex:1;gap:16px;padding:16px}
+  .panel{width:300px;background:var(--card);border-radius:12px;padding:14px;box-shadow:0 6px 20px rgba(2,6,23,0.6);border:1px solid rgba(255,255,255,0.02);color:#e6eef3}
+  .main{flex:1;display:flex;flex-direction:column;gap:12px}
+  .mapwrap{flex:1;border-radius:12px;overflow:hidden;border:1px solid rgba(255,255,255,0.03);position:relative;background:#071018}
+  #map{width:100%;height:100%}
+  .controls{position:absolute;bottom:18px;left:50%;transform:translateX(-50%);display:flex;gap:10px;z-index:1000}
+  .btn{background:var(--accent);color:#012; padding:10px 14px;border-radius:10px;border:none;font-weight:700;cursor:pointer}
+  .btn.alt{background:var(--accent2);color:#111}
+  .small{padding:8px 10px;font-size:13px}
+  .option-list{display:flex;gap:8px;margin-bottom:12px}
+  .route-chip{background:rgba(255,255,255,0.03);padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.02);cursor:pointer}
+  .route-chip.active{outline:3px solid rgba(34,193,195,0.13);box-shadow:0 6px 20px rgba(34,193,195,0.06)}
+
+  h3{margin:8px 0 12px 0;color:#cfeff0}
+  .muted{color:var(--muted);font-size:13px}
+  .kpi{display:flex;gap:8px;margin-top:12px}
+  .kpi .box{flex:1;background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));padding:12px;border-radius:8px;text-align:center}
+  .kpi b{display:block;font-size:18px;color:#fff}
+  .alert{background:#2a0b0f;border-left:4px solid #ff6b6b;padding:8px 10px;border-radius:8px;margin-top:10px;color:#ffd6d6}
+
+  .eta-box{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,0.03);width:260px}
+  .eta-row{display:flex;justify-content:space-between;margin-top:6px}
+  footer{height:34px;color:var(--muted);display:flex;align-items:center;justify-content:center;border-top:1px solid rgba(255,255,255,0.02)}
+
+  /* simulation controls */
+  .sim-controls{display:flex;gap:8px;align-items:center;margin-top:8px}
+  .sim-controls input[type=range]{width:120px}
+
+  .merge-suggestion{background:#081212;border-left:4px solid #ffc857;padding:10px;border-radius:8px;margin-top:12px;color:#fff}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="brand">
+      <img src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='28' height='28'><rect width='28' height='28' rx='6' fill='%2322c1c3'/></svg>" alt="" style="border-radius:6px"/>
+      <h1>CR(S)² — Convoy Command</h1>
+      <div style="width:10px"></div>
+      <div class="muted">AI Transport & Road-space Management</div>
+    </div>
+
+    <div class="mission-summary">
+      <div class="ms-item"><b id="ms-convoys">—</b><span>Total Convoys</span></div>
+      <div class="ms-item"><b id="ms-delay">—</b><span>Avg Delay</span></div>
+      <div class="ms-item"><b id="ms-fuel">—</b><span>Fuel Saved</span></div>
+    </div>
+  </header>
+
+  <div class="container">
+
+    <!-- LEFT PANEL: Convoys & Options -->
+    <div class="panel">
+      <h3>Plan New Convoy</h3>
+      <div class="muted">Source / Destination</div>
+      <input id="src" placeholder="Start lat,lon" style="width:100%;margin-top:8px;padding:8px;border-radius:8px;border:none;background:rgba(255,255,255,0.02);color:#fff"/>
+      <input id="dst" placeholder="End lat,lon" style="width:100%;margin-top:8px;padding:8px;border-radius:8px;border:none;background:rgba(255,255,255,0.02);color:#fff"/>
+      <div style="margin-top:10px;display:flex;gap:8px">
+        <button class="btn small" id="btn-generate">Generate</button>
+        <button class="btn small alt" id="btn-visual">Preview Visual</button>
+      </div>
+
+      <h3 style="margin-top:14px">Active Convoys</h3>
+      <div id="convoysList">
+        <!-- dynamic -->
+      </div>
+
+      <div style="margin-top:14px">
+        <div class="muted">Simulation</div>
+        <div class="sim-controls">
+          <button class="btn small" id="playBtn">Play</button>
+          <button class="btn small alt" id="pauseBtn">Pause</button>
+          <label style="font-size:12px;color:var(--muted)">Speed</label>
+          <input id="speedRange" type="range" min="0.25" max="4" step="0.25" value="1"/>
+        </div>
+
+        <label style="display:block;margin-top:8px;font-size:13px;color:var(--muted)">
+          <input type="checkbox" id="simulateNearby" /> Simulate Nearby Convoy (for merge suggestions)
+        </label>
+      </div>
+
+    </div>
+
+    <!-- CENTER: MAP -->
+    <div class="main">
+      <div class="mapwrap">
+        <div id="map"></div>
+        <div class="controls" style="z-index:1000">
+          <div class="option-list" id="routeOptions" style="display:flex"></div>
+          <button class="btn" id="btnFast">Fastest</button>
+          <button class="btn alt" id="btnShortest">Shortest</button>
+        </div>
+
+        <div style="position:absolute;right:14px;top:14px;z-index:1200">
+          <div class="eta-box" id="etaBox">
+            <div style="font-weight:700;color:#bff8f7">Smart ETA</div>
+            <div class="eta-row"><span>ETA</span><b id="etaMain">--</b></div>
+            <div class="eta-row"><span>Distance</span><b id="etaDist">--</b></div>
+            <div class="eta-row"><span>ETA with Delay</span><b id="etaWithDelay">--</b></div>
+            <div style="height:6px"></div>
+            <div class="muted">Convoy Health</div>
+            <div class="eta-row"><span>Fuel</span><b id="healthFuel">--</b></div>
+            <div class="eta-row"><span>Signal</span><b id="healthSig">--</b></div>
+          </div>
+        </div>
+
+        <div style="position:absolute;left:14px;top:14px;z-index:1200">
+          <div class="merge-suggestion" id="mergeBox" style="display:none"></div>
+        </div>
+
+      </div>
+
+      <!-- bottom controls / info -->
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px">
+        <div class="kpi">
+          <div class="box"><b id="k1">0</b><div class="muted">Active Convoys</div></div>
+          <div class="box"><b id="k2">0</b><div class="muted">Convoys Merged</div></div>
+          <div class="box"><b id="k3">0</b><div class="muted">Conflicts</div></div>
+        </div>
+
+        <div>
+          <button class="btn" id="btnVisualRoute">Visual Route</button>
+          <button class="btn alt" id="btnRealRoute">Real Route</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT: Analytics & Alerts -->
+    <div class="panel">
+      <h3>Analytics</h3>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <div class="muted">Avg Delay</div>
+        <b id="statDelay">-</b>
+        <div style="height:10px"></div>
+
+        <div class="muted">Conflicts Prevented</div>
+        <b id="statConf">-</b>
+        <div style="height:10px"></div>
+
+        <div class="muted">On-Time %</div>
+        <b id="statOnTime">-</b>
+      </div>
+
+      <h3 style="margin-top:14px">Alerts</h3>
+      <div id="alerts">
+        <div class="alert">C-101: Heavy traffic ahead — reroute suggested</div>
+      </div>
+    </div>
+
+  </div>
+
+  <footer>CR(S)² • Demo UI • OSRM used for routing • Last updated: <span id="lastUpdated">--</span></footer>
+</div>
+
+<script>
+/* ----------------- Configuration ----------------- */
+// default points (Delhi Cantonment -> Gurugram)
+let defaultPoints = [
+  [28.6139, 77.2090],
+  [28.5865, 77.1660],
+  [28.5355, 77.2167],
+  [28.4595, 77.0266]
+];
+
+const osrmBase = "https://router.project-osrm.org";
+
+/* ----------------- Map Setup ----------------- */
+const map = L.map('map', {zoomControl:false, preferCanvas:true}).setView([28.58,77.12], 11);
+L.control.zoom({position:'topright'}).addTo(map);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png', {maxZoom:19, attribution:''}).addTo(map);
+
+/* layer groups */
+const routesLayer = L.layerGroup().addTo(map);
+const convoyLayer = L.layerGroup().addTo(map);
+const otherConvoyLayer = L.layerGroup().addTo(map);
+
+/* truck icon */
+const truckIcon = L.divIcon({html:'🚚', className:'truck-icon', iconSize:[28,28]});
+
+/* UI state */
+let currentRoutes = []; // array of route objects from OSRM
+let activeRouteIndex = 0;
+let movingMarker = null;
+let animTimer = null;
+let simSpeed = 1; // multiplier
+let isPlaying = false;
+
+/* metrics */
+document.getElementById('ms-convoys').innerText = 12;
+document.getElementById('ms-delay').innerText = '12m';
+document.getElementById('ms-fuel').innerText = '₹12.4L';
+document.getElementById('k1').innerText = 12;
+document.getElementById('k2').innerText = 8;
+document.getElementById('k3').innerText = 2;
+document.getElementById('statDelay').innerText = '12m';
+document.getElementById('statConf').innerText = '3';
+document.getElementById('statOnTime').innerText = '78%';
+document.getElementById('lastUpdated').innerText = new Date().toLocaleString();
+
+/* ----------------- Helpers ----------------- */
+function coordsToString(points){
+  return points.map(p=>p[1]+','+p[0]).join(';'); // lon,lat
+}
+
+function metersToKm(m){ return (m/1000).toFixed(2)+' km'; }
+function secondsToTime(s){
+  if(!s && s!==0) return '--';
+  let mins = Math.round(s/60);
+  let hrs = Math.floor(mins/60);
+  mins = mins%60;
+  return hrs>0 ? `${hrs}h ${mins}m` : `${mins}m`;
+}
+
+/* ----------------- Fetch routes (OSRM) ----------------- */
+async function fetchRoutes(points){
+  // request with alternatives
+  const coords = coordsToString(points);
+  const url = `${osrmBase}/route/v1/driving/${coords}?overview=full&geometries=geojson&alternatives=true&steps=false`;
+  const r = await fetch(url);
+  if(!r.ok) throw new Error('OSRM failed');
+  const j = await r.json();
+  return j.routes; // array
+}
+
+/* ----------------- Draw routes ----------------- */
+function drawRoutes(routes){
+  routesLayer.clearLayers();
+  currentRoutes = routes;
+  const routeOptions = document.getElementById('routeOptions');
+  routeOptions.innerHTML = '';
+  routes.forEach((rt, idx)=>{
+    const coords = rt.geometry.coordinates.map(c=>[c[1],c[0]]);
+    const poly = L.polyline(coords, {color: idx===0 ? '#ff4d4d' : (idx===1? '#ffb86b' : '#7ce3d8'), weight:6, opacity:0.85, dashArray: idx===0? null : '6 8'}).addTo(routesLayer);
+    poly.bindPopup(`<b>Route ${idx+1}</b><br>Distance: ${metersToKm(rt.distance)}<br>Duration: ${secondsToTime(rt.duration)}`);
+    const chip = document.createElement('div');
+    chip.className = 'route-chip' + (idx===0 ? ' active' : '');
+    chip.innerHTML = `<b>Option ${idx+1}</b><div class="muted" style="font-size:11px">${metersToKm(rt.distance)}, ${secondsToTime(rt.duration)}</div>`;
+    chip.onclick = ()=>{ selectRoute(idx); document.querySelectorAll('.route-chip').forEach(c=>c.classList.remove('active')); chip.classList.add('active'); }
+    routeOptions.appendChild(chip);
+    // store poly in route object for reference
+    routes[idx].leafletPoly = poly;
+  });
+
+  // center to first route
+  if(routes.length){
+    const firstCoords = routes[0].geometry.coordinates.map(c=>[c[1],c[0]]);
+    map.fitBounds(firstCoords, {padding:[40,40]});
+    populateETA(0);
+    selectRoute(0);
+  }
+}
+
+/* ----------------- Select a route ----------------- */
+function selectRoute(idx){
+  activeRouteIndex = idx;
+  // highlight polyline
+  currentRoutes.forEach((r,i)=>{
+    r.leafletPoly.setStyle({opacity: i===idx?0.98:0.35, weight: i===idx?6:4});
+  });
+  populateETA(idx);
+  resetSimulation(); // restart marker on new route
+}
+
+/* ----------------- Populate ETA box ----------------- */
+function populateETA(idx){
+  if(!currentRoutes || !currentRoutes[idx]) return;
+  const rt = currentRoutes[idx];
+  document.getElementById('etaMain').innerText = secondsToTime(rt.duration);
+  document.getElementById('etaDist').innerText = metersToKm(rt.distance);
+  // simulate small operational delay
+  const delaySec = 60 * Math.floor(Math.random()*10); // random 0-9 min
+  document.getElementById('etaWithDelay').innerText = secondsToTime(rt.duration + delaySec);
+  document.getElementById('healthFuel').innerText = (60 + Math.floor(Math.random()*30)) + '%';
+  document.getElementById('healthSig').innerText = (80 + Math.floor(Math.random()*20)) + '%';
+}
+
+/* ----------------- Simulation: move marker along polyline ----------------- */
+function resetSimulation(){
+  // clear existing marker
+  if(movingMarker){ convoyLayer.clearLayers(); movingMarker=null; }
+  stopAnimation();
+  isPlaying = false;
+  document.getElementById('playBtn').innerText = 'Play';
+}
+
+function playSimulation(){
+  if(!currentRoutes || !currentRoutes[activeRouteIndex]) return;
+  if(isPlaying) return;
+  isPlaying = true;
+  document.getElementById('playBtn').innerText = 'Playing';
+  const coords = currentRoutes[activeRouteIndex].geometry.coordinates.map(c=>[c[1],c[0]]);
+  let idx=0;
+  const totalSec = currentRoutes[activeRouteIndex].duration; // seconds
+  // derive step delay based on speed slider and number of points
+  const baseStepMs = 100; // base tick
+  function step(){
+    if(idx>=coords.length){
+      stopAnimation();
+      isPlaying=false;
+      document.getElementById('playBtn').innerText = 'Play';
+      return;
+    }
+    const pos = coords[idx];
+    if(!movingMarker){
+      movingMarker = L.marker(pos, {icon: truckIcon}).addTo(convoyLayer);
+    } else {
+      movingMarker.setLatLng(pos);
+    }
+    idx++;
+    const speedVal = parseFloat(document.getElementById('speedRange').value) || 1;
+    animTimer = setTimeout(step, baseStepMs / speedVal);
+  }
+  step();
+}
+
+function stopAnimation(){
+  if(animTimer) clearTimeout(animTimer);
+  animTimer = null;
+  isPlaying = false;
+  document.getElementById('playBtn').innerText = 'Play';
+}
+
+/* ----------------- Convoy Merge Suggestion AI ----------------- */
+function computeOverlap(routeA, routeB){
+  // naive overlap: count points within 150m of each other
+  const coordsA = routeA.geometry.coordinates.map(c=>[c[1],c[0]]);
+  const coordsB = routeB.geometry.coordinates.map(c=>[c[1],c[0]]);
+  let overlap = 0;
+  for(let a of coordsA){
+    for(let b of coordsB){
+      const d = map.distance(a,b);
+      if(d < 150) { overlap++; break; }
+    }
+  }
+  const ratio = overlap / coordsA.length;
+  return ratio; // 0..1
+}
+
+/* show merge suggestion */
+function maybeSuggestMerge(){
+  if(!document.getElementById('simulateNearby').checked){ document.getElementById('mergeBox').style.display='none'; return; }
+  // simulate a nearby convoy: request a slightly offset route from same origin to a nearby dest
+  const offsetPoints = JSON.parse(JSON.stringify(defaultPoints));
+  // nudge dest a bit
+  offsetPoints[offsetPoints.length-1][0] += 0.02; offsetPoints[offsetPoints.length-1][1] += 0.02;
+  Promise.all([fetchRoutes(defaultPoints), fetchRoutes(offsetPoints)]).then(([r1, r2])=>{
+    // take first routes
+    const ratio = computeOverlap(r1[0], r2[0]);
+    if(ratio > 0.12){
+      const percent = Math.round(ratio*100);
+      document.getElementById('mergeBox').style.display='block';
+      document.getElementById('mergeBox').innerHTML = `<b>Merge Suggestion</b><div class="muted">Routes overlap by ${percent}% — consider merging at nearest checkpoint to save fuel.</div>`;
+      // draw other convoy
+      otherConvoyLayer.clearLayers();
+      const coords = r2[0].geometry.coordinates.map(c=>[c[1],c[0]]);
+      L.polyline(coords, {color:'#7a9cff',weight:4,opacity:0.9,dashArray:'6 8'}).addTo(otherConvoyLayer);
+    } else {
+      document.getElementById('mergeBox').style.display='none';
+      otherConvoyLayer.clearLayers();
+    }
+  }).catch(err=>{
+    console.warn('merge-check failed',err);
+  });
+}
+
+/* ----------------- Wiring UI ----------------- */
+document.getElementById('btn-generate').onclick = async ()=>{
+  const src = document.getElementById('src').value.trim();
+  const dst = document.getElementById('dst').value.trim();
+  if(!src || !dst){ alert('Enter start and end coords like: 28.6139,77.2090'); return; }
+  const s = src.split(',').map(x=>parseFloat(x.trim()));
+  const d = dst.split(',').map(x=>parseFloat(x.trim()));
+  const pts = [s,d];
+  try{
+    const routes = await fetchRoutes(pts);
+    drawRoutes(routes);
+    maybeSuggestMerge();
+  }catch(e){
+    alert('Route fetch failed: '+e.message);
+  }
+};
+
+document.getElementById('btn-visual').onclick = async ()=>{
+  try{
+    const routes = await fetchRoutes(defaultPoints);
+    drawRoutes(routes);
+    maybeSuggestMerge();
+  }catch(e){ alert('OSRM error: '+e.message) }
+};
+
+document.getElementById('btnFast').onclick = ()=>{ // pick route with smallest duration
+  if(!currentRoutes.length) return;
+  let best = 0;
+  currentRoutes.forEach((r,i)=>{ if(r.duration < currentRoutes[best].duration) best = i; });
+  selectRoute(best);
+};
+
+document.getElementById('btnShortest').onclick = ()=>{ // pick route with smallest distance
+  if(!currentRoutes.length) return;
+  let best = 0;
+  currentRoutes.forEach((r,i)=>{ if(r.distance < currentRoutes[best].distance) best = i; });
+  selectRoute(best);
+};
+
+document.getElementById('playBtn').onclick = ()=>{ playSimulation(); };
+document.getElementById('pauseBtn').onclick = ()=>{ stopAnimation(); };
+
+document.getElementById('speedRange').oninput = (e)=>{ simSpeed = parseFloat(e.target.value); };
+document.getElementById('simulateNearby').onchange = ()=>{ maybeSuggestMerge(); };
+
+document.getElementById('btnVisualRoute').onclick = ()=>{
+  document.getElementById('btn-visual').click();
+};
+document.getElementById('btnRealRoute').onclick = ()=>{
+  // try to use OSMnx backend? we will approximate by calling OSRM for now
+  // you can change this to call /real_route endpoint if you have a JSON route API
+  const pts = defaultPoints;
+  fetchRoutes(pts).then(drawRoutes).catch(e=>alert(e));
+};
+
+/* load default route on page load */
+(async function init(){
+  try{
+    const routes = await fetchRoutes(defaultPoints);
+    drawRoutes(routes);
+    maybeSuggestMerge();
+  }catch(e){
+    console.error('init failed',e);
+  }
+})();
+
+</script>
+</body>
+</html>
